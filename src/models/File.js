@@ -217,7 +217,7 @@ export class File {
             // Count cyclomatic complexity indicators
             const complexityKeywords = [
                 'if', 'else', 'switch', 'case', 'for', 'while', 'do', 'foreach',
-                'try', 'catch', 'finally', 'throw', '&&', '||', '?'
+                'try', 'catch', 'finally', 'throw'
             ];
 
             let keywordCount = 0;

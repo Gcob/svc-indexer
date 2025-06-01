@@ -4,9 +4,9 @@
 
 import path from 'path';
 import ignore from 'ignore';
-import { FileSystemService } from './FileSystemService.js';
-import { GitService } from './GitService.js';
-import { Project } from '../models/Project.js';
+import {FileSystemService} from './FileSystemService.js';
+import {GitService} from './GitService.js';
+import {Project} from '../models/Project.js';
 
 /**
  * Service for indexing programming projects
@@ -26,7 +26,7 @@ export class IndexingService {
      * @returns {Promise<Object>} Project index
      */
     async indexProject(config, options = {}) {
-        const { detailed = false, readContent = true } = options;
+        const {detailed = false, readContent = true} = options;
 
         // Create project instance
         const project = new Project(config.project);
@@ -275,10 +275,10 @@ export class IndexingService {
 
         // Cyclomatic complexity
         const cyclomaticKeywords = {
-            javascript: ['if', 'else', 'switch', 'case', 'for', 'while', 'do', 'try', 'catch', '&&', '||', '?'],
+            javascript: ['if', 'else', 'switch', 'case', 'for', 'while', 'do', 'try', 'catch', '&&', '||'],
             python: ['if', 'elif', 'else', 'for', 'while', 'try', 'except', 'and', 'or'],
-            java: ['if', 'else', 'switch', 'case', 'for', 'while', 'do', 'try', 'catch', '&&', '||', '?'],
-            php: ['if', 'else', 'switch', 'case', 'for', 'while', 'do', 'try', 'catch', '&&', '||', '?']
+            java: ['if', 'else', 'switch', 'case', 'for', 'while', 'do', 'try', 'catch', '&&', '||'],
+            php: ['if', 'else', 'switch', 'case', 'for', 'while', 'do', 'try', 'catch', '&&', '||']
         };
 
         const keywords = cyclomaticKeywords[language] || cyclomaticKeywords.javascript;
@@ -803,7 +803,7 @@ export class IndexingService {
      */
     calculateOverallComplexity(files) {
         if (files.length === 0) {
-            return { average: 0, max: 0, min: 0, distribution: {} };
+            return {average: 0, max: 0, min: 0, distribution: {}};
         }
 
         const complexities = files.map(f => f.complexity || 1);

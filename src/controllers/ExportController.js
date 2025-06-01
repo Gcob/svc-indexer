@@ -6,10 +6,10 @@ import chalk from 'chalk';
 import ora from 'ora';
 import path from 'path';
 import fs from 'fs-extra';
-import {ConfigSchema} from '../config/ConfigSchema.js';
-import {IndexingService} from '../services/IndexingService.js';
-import {ExportService} from '../services/ExportService.js';
-import {AIService} from '../services/AIService.js';
+import { ConfigSchema } from '../config/ConfigSchema.js';
+import { IndexingService } from '../services/IndexingService.js';
+import { ExportService } from '../services/ExportService.js';
+import { AIService } from '../services/AIService.js';
 
 /**
  * Controller for handling export commands
@@ -127,7 +127,7 @@ export class ExportController {
 
             // Index project with detailed analysis
             const spinner = ora('Performing deep project analysis...').start();
-            const projectIndex = await this.indexingService.indexProject(config, {detailed: true});
+            const projectIndex = await this.indexingService.indexProject(config, { detailed: true });
             spinner.succeed(`Analyzed ${projectIndex.totalFiles} files with detailed metadata`);
 
             // Generate AI descriptions and documentation
@@ -284,10 +284,10 @@ export class ExportController {
      */
     displayMindmapStats(projectIndex) {
         console.log(chalk.blue('\n📊 Project Overview:'));
-        console.log(`   Files: ${chalk.white(projectIndex.totalFiles)}`);
-        console.log(`   Folders: ${chalk.white(projectIndex.totalFolders)}`);
-        console.log(`   Languages: ${chalk.white(projectIndex.languages.join(', '))}`);
-        console.log(`   Total Size: ${chalk.white(this.formatBytes(projectIndex.totalSize))}`);
+        console.log(`   Files: ${chalk.white(projectIndex.metadata?.totalFiles || 0)}`);
+        console.log(`   Folders: ${chalk.white(projectIndex.metadata?.totalFolders || 0)}`);
+        console.log(`   Languages: ${chalk.white((projectIndex.metadata?.languages || []).join(', '))}`);
+        console.log(`   Total Size: ${chalk.white(this.formatBytes(projectIndex.metadata?.totalSize || 0))}`);
     }
 
     /**
