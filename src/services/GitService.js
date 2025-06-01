@@ -509,6 +509,4 @@ export class GitService {
 
         return filePath === pattern || filePath.startsWith(pattern + '/');
     }
-
-    // todo : validate this file
 }

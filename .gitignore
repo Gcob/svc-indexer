@@ -60,3 +60,5 @@ temp/
 # Backup files
 *.backup
 *.bak
+
+config.yml

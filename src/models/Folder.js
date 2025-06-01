@@ -138,12 +138,12 @@ export class Folder {
      * @param {Object} obj - Plain object representation
      * @returns {Folder} New Folder instance
      */
-    static fromObject(obj) {
+    static async fromObject(obj) {
         const folder = new Folder(obj);
 
         // Reconstruct files and subfolders if they exist
         if (obj.files) {
-            const { File } = await import('./File.js');
+            const {File} = await import('./File.js');
             folder.files = obj.files.map(fileObj => File.fromObject(fileObj));
         }
 

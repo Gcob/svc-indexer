@@ -4,9 +4,9 @@
 
 import path from 'path';
 import ignore from 'ignore';
-import {FileSystemService} from './FileSystemService.js';
-import {GitService} from './GitService.js';
-import {Project} from '../models/Project.js';
+import { FileSystemService } from './FileSystemService.js';
+import { GitService } from './GitService.js';
+import { Project } from '../models/Project.js';
 
 /**
  * Service for indexing programming projects
@@ -26,7 +26,7 @@ export class IndexingService {
      * @returns {Promise<Object>} Project index
      */
     async indexProject(config, options = {}) {
-        const {detailed = false, readContent = true} = options;
+        const { detailed = false, readContent = true } = options;
 
         // Create project instance
         const project = new Project(config.project);
@@ -463,6 +463,330 @@ export class IndexingService {
             testCoverage: this.calculateTestCoverage(files),
             documentation: this.analyzeDocumentation(files),
             dependencies: this.analyzeDependencies(files)
+        };
+    }
+
+    /**
+     * Detect architecture pattern (MVC, layered, etc.)
+     * @param {Folder[]} folders - Project folders
+     * @returns {string[]} Detected patterns
+     */
+    detectArchitecturePattern(folders) {
+        const folderNames = folders.map(f => f.getName().toLowerCase());
+        const patterns = [];
+
+        // MVC pattern
+        if (folderNames.includes('models') && folderNames.includes('views') && folderNames.includes('controllers')) {
+            patterns.push('MVC');
+        }
+
+        // Layered architecture
+        if (folderNames.includes('services') && folderNames.includes('repositories')) {
+            patterns.push('Layered');
+        }
+
+        // Clean architecture
+        if (folderNames.includes('entities') && folderNames.includes('usecases')) {
+            patterns.push('Clean Architecture');
+        }
+
+        // Microservices
+        if (folderNames.filter(name => name.includes('service')).length > 2) {
+            patterns.push('Microservices');
+        }
+
+        return patterns.length > 0 ? patterns : ['Unknown'];
+    }
+
+    /**
+     * Detect frameworks used in the project
+     * @param {File[]} files - Project files
+     * @returns {string[]} Detected frameworks
+     */
+    detectFrameworks(files) {
+        const frameworks = new Set();
+
+        files.forEach(file => {
+            const content = file.doc || '';
+            const fileName = file.getName().toLowerCase();
+
+            // React
+            if (content.includes('react') || fileName.includes('jsx') || content.includes('useState')) {
+                frameworks.add('React');
+            }
+
+            // Vue
+            if (content.includes('vue') || fileName.includes('.vue')) {
+                frameworks.add('Vue.js');
+            }
+
+            // Angular
+            if (content.includes('@angular') || content.includes('ng-')) {
+                frameworks.add('Angular');
+            }
+
+            // Express.js
+            if (content.includes('express') || content.includes('app.listen')) {
+                frameworks.add('Express.js');
+            }
+
+            // Laravel
+            if (content.includes('illuminate') || content.includes('artisan')) {
+                frameworks.add('Laravel');
+            }
+
+            // Spring
+            if (content.includes('@SpringBootApplication') || content.includes('springframework')) {
+                frameworks.add('Spring');
+            }
+
+            // Django
+            if (content.includes('django') || content.includes('models.Model')) {
+                frameworks.add('Django');
+            }
+        });
+
+        return Array.from(frameworks);
+    }
+
+    /**
+     * Detect design patterns in the code
+     * @param {File[]} files - Project files
+     * @returns {string[]} Detected patterns
+     */
+    detectDesignPatterns(files) {
+        const patterns = new Set();
+
+        files.forEach(file => {
+            const content = file.doc || '';
+            const fileName = file.getName().toLowerCase();
+
+            // Singleton
+            if (content.includes('getInstance') || fileName.includes('singleton')) {
+                patterns.add('Singleton');
+            }
+
+            // Factory
+            if (fileName.includes('factory') || content.includes('createInstance')) {
+                patterns.add('Factory');
+            }
+
+            // Observer
+            if (content.includes('subscribe') || content.includes('addEventListener')) {
+                patterns.add('Observer');
+            }
+
+            // Repository
+            if (fileName.includes('repository') || content.includes('Repository')) {
+                patterns.add('Repository');
+            }
+
+            // Service
+            if (fileName.includes('service') || content.includes('Service')) {
+                patterns.add('Service');
+            }
+        });
+
+        return Array.from(patterns);
+    }
+
+    /**
+     * Calculate test coverage estimate
+     * @param {File[]} files - Project files
+     * @returns {Object} Test coverage info
+     */
+    calculateTestCoverage(files) {
+        const testFiles = files.filter(file =>
+            file.type === 'test' ||
+            file.path.includes('test') ||
+            file.path.includes('spec')
+        );
+
+        const sourceFiles = files.filter(file =>
+            !testFiles.includes(file) &&
+            ['javascript', 'typescript', 'python', 'java', 'php'].includes(file.language)
+        );
+
+        const coverage = sourceFiles.length > 0 ? (testFiles.length / sourceFiles.length) * 100 : 0;
+
+        return {
+            testFiles: testFiles.length,
+            sourceFiles: sourceFiles.length,
+            estimatedCoverage: Math.round(coverage),
+            hasTests: testFiles.length > 0
+        };
+    }
+
+    /**
+     * Analyze documentation quality
+     * @param {File[]} files - Project files
+     * @returns {Object} Documentation analysis
+     */
+    analyzeDocumentation(files) {
+        const docFiles = files.filter(file =>
+            file.type === 'readme' ||
+            file.type === 'documentation' ||
+            file.extension === 'md'
+        );
+
+        const filesWithDocs = files.filter(file => file.doc && file.doc.trim().length > 0);
+
+        return {
+            documentationFiles: docFiles.length,
+            filesWithDocumentation: filesWithDocs.length,
+            totalFiles: files.length,
+            documentationRatio: files.length > 0 ? (filesWithDocs.length / files.length) * 100 : 0,
+            hasReadme: docFiles.some(file => file.getName().toLowerCase().includes('readme'))
+        };
+    }
+
+    /**
+     * Analyze project dependencies
+     * @param {File[]} files - Project files
+     * @returns {Object} Dependencies analysis
+     */
+    analyzeDependencies(files) {
+        const allDependencies = new Set();
+        const internalModules = new Set();
+
+        files.forEach(file => {
+            if (file.metadata && file.metadata.dependencies) {
+                file.metadata.dependencies.forEach(dep => allDependencies.add(dep));
+            }
+
+            if (file.metadata && file.metadata.imports) {
+                file.metadata.imports.forEach(imp => {
+                    if (imp.startsWith('.') || imp.startsWith('/')) {
+                        internalModules.add(imp);
+                    }
+                });
+            }
+        });
+
+        return {
+            externalDependencies: Array.from(allDependencies),
+            internalModules: Array.from(internalModules),
+            totalDependencies: allDependencies.size,
+            totalInternalModules: internalModules.size
+        };
+    }
+
+    /**
+     * Build hierarchical project structure
+     * @param {Folder[]} folders - Project folders
+     * @param {File[]} files - Project files
+     * @returns {Object} Hierarchical structure
+     */
+    buildProjectStructure(folders, files) {
+        const rootFolder = folders.find(f => f.depth === 0);
+        if (!rootFolder) return {};
+
+        return this.buildFolderStructure(rootFolder, folders, files);
+    }
+
+    /**
+     * Build folder structure recursively
+     * @param {Folder} folder - Current folder
+     * @param {Folder[]} allFolders - All folders
+     * @param {File[]} allFiles - All files
+     * @returns {Object} Folder structure
+     */
+    buildFolderStructure(folder, allFolders, allFiles) {
+        const structure = {
+            name: folder.getName(),
+            path: folder.path,
+            type: 'folder',
+            children: []
+        };
+
+        // Add subfolders
+        const subfolders = allFolders.filter(f =>
+            f.path.startsWith(folder.path + '/') &&
+            f.depth === folder.depth + 1
+        );
+
+        subfolders.forEach(subfolder => {
+            structure.children.push(this.buildFolderStructure(subfolder, allFolders, allFiles));
+        });
+
+        // Add files in this folder
+        const folderFiles = allFiles.filter(f =>
+            f.path.startsWith(folder.path + '/') &&
+            !f.path.substring(folder.path.length + 1).includes('/')
+        );
+
+        folderFiles.forEach(file => {
+            structure.children.push({
+                name: file.getFullName(),
+                path: file.path,
+                type: 'file',
+                fileType: file.type,
+                language: file.language,
+                size: file.size,
+                complexity: file.complexity,
+                description: file.description
+            });
+        });
+
+        return structure;
+    }
+
+    /**
+     * Extract unique languages from files
+     * @param {File[]} files - Project files
+     * @returns {string[]} Array of languages
+     */
+    extractLanguages(files) {
+        const languages = new Set();
+        files.forEach(file => {
+            if (file.language && file.language !== 'unknown') {
+                languages.add(file.language);
+            }
+        });
+        return Array.from(languages);
+    }
+
+    /**
+     * Get file type distribution
+     * @param {File[]} files - Project files
+     * @returns {Object} File type counts
+     */
+    getFileTypeDistribution(files) {
+        const distribution = {};
+        files.forEach(file => {
+            const type = file.type || 'unknown';
+            distribution[type] = (distribution[type] || 0) + 1;
+        });
+        return distribution;
+    }
+
+    /**
+     * Calculate overall project complexity
+     * @param {File[]} files - Project files
+     * @returns {Object} Complexity metrics
+     */
+    calculateOverallComplexity(files) {
+        if (files.length === 0) {
+            return { average: 0, max: 0, min: 0, distribution: {} };
+        }
+
+        const complexities = files.map(f => f.complexity || 1);
+        const sum = complexities.reduce((a, b) => a + b, 0);
+        const average = sum / complexities.length;
+        const max = Math.max(...complexities);
+        const min = Math.min(...complexities);
+
+        // Distribution by complexity level
+        const distribution = {};
+        for (let i = 1; i <= 10; i++) {
+            distribution[i] = complexities.filter(c => c === i).length;
+        }
+
+        return {
+            average: Math.round(average * 100) / 100,
+            max,
+            min,
+            distribution
         };
     }
 }
