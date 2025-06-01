@@ -1,0 +1,33 @@
+{
+  "name": "svc-indexer",
+  "version": "1.0.0",
+  "description": "A Node.js service to index programming projects and export them to markdown for AI consumption",
+  "type": "module",
+  "main": "src/index.js",
+  "bin": {
+    "svc-indexer": "./src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "indexer",
+    "markdown",
+    "ai",
+    "documentation",
+    "project-analysis"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^11.1.0",
+    "inquirer": "^9.2.12",
+    "chalk": "^5.3.0",
+    "js-yaml": "^4.1.0",
+    "ora": "^7.0.1"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
