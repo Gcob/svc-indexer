@@ -39,19 +39,37 @@ export class FileSystemService {
             excludePatterns = []
         } = options;
 
+        // Validate root path
+        if (!rootPath || rootPath.trim() === '') {
+            throw new Error('Root path cannot be empty');
+        }
+
+        const resolvedRootPath = path.resolve(rootPath);
+
+        // Check if path exists
+        try {
+            const stats = await fs.stat(resolvedRootPath);
+            if (!stats.isDirectory()) {
+                throw new Error(`Path is not a directory: ${resolvedRootPath}`);
+            }
+        } catch (error) {
+            throw new Error(`Cannot access path: ${resolvedRootPath} - ${error.message}`);
+        }
+
         const ignoreFilter = ignore().add(excludePatterns);
-        const rootFolder = new Folder({ path: rootPath, depth: 0 });
+        const rootFolder = new Folder({ path: resolvedRootPath, depth: 0 });
         const allFiles = [];
         const allFolders = [rootFolder];
 
-        await this._scanRecursive(rootPath, rootFolder, {
+        await this._scanRecursive(resolvedRootPath, rootFolder, {
             maxDepth,
             includeFiles,
             includeHidden,
             ignoreFilter,
             currentDepth: 0,
             allFiles,
-            allFolders
+            allFolders,
+            rootPath: resolvedRootPath
         });
 
         return {
@@ -79,7 +97,8 @@ export class FileSystemService {
             ignoreFilter,
             currentDepth,
             allFiles,
-            allFolders
+            allFolders,
+            rootPath
         } = options;
 
         if (currentDepth >= maxDepth) return;
@@ -89,7 +108,7 @@ export class FileSystemService {
 
             for (const entry of entries) {
                 const entryPath = path.join(currentPath, entry.name);
-                const relativePath = path.relative(options.rootPath || currentPath, entryPath);
+                const relativePath = path.relative(rootPath, entryPath);
 
                 // Skip hidden files/folders if not included
                 if (!includeHidden && entry.name.startsWith('.')) continue;

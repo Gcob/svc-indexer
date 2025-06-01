@@ -6,10 +6,10 @@ import chalk from 'chalk';
 import ora from 'ora';
 import path from 'path';
 import fs from 'fs-extra';
-import { ConfigSchema } from '../config/ConfigSchema.js';
-import { IndexingService } from '../services/IndexingService.js';
-import { ExportService } from '../services/ExportService.js';
-import { AIService } from '../services/AIService.js';
+import {ConfigSchema} from '../config/ConfigSchema.js';
+import {IndexingService} from '../services/IndexingService.js';
+import {ExportService} from '../services/ExportService.js';
+import {AIService} from '../services/AIService.js';
 
 /**
  * Controller for handling export commands
@@ -30,48 +30,83 @@ export class ExportController {
 
         try {
             // Load configuration
+            console.log(chalk.gray(`Loading configuration from: ${options.config}`));
             const config = await ConfigSchema.loadConfig(options.config);
+
+            // Validate project path
+            if (!config.project.rootPath || config.project.rootPath.trim() === '') {
+                throw new Error('Project root path is not configured. Please run "svc-indexer init" first.');
+            }
+
+            const resolvedPath = path.resolve(config.project.rootPath);
+            console.log(chalk.gray(`Project path: ${resolvedPath}`));
+
+            // Check if path exists
+            if (!await fs.pathExists(resolvedPath)) {
+                throw new Error(`Project path does not exist: ${resolvedPath}`);
+            }
+
+            // Log configuration details for debugging
+            console.log(chalk.gray(`Include patterns: ${config.include.length} patterns`));
+            console.log(chalk.gray(`Exclude patterns: ${config.exclude.length} patterns`));
 
             // Index project
             const spinner = ora('Indexing project structure...').start();
-            const projectIndex = await this.indexingService.indexProject(config);
-            spinner.succeed(`Indexed ${projectIndex.totalFiles} files in ${projectIndex.totalFolders} folders`);
+            try {
+                const projectIndex = await this.indexingService.indexProject(config);
+                spinner.succeed(`Indexed ${projectIndex.metadata.totalFiles} files in ${projectIndex.metadata.totalFolders} folders`);
 
-            // Generate descriptions with AI if not dry run
-            if (!options.dry) {
-                const aiSpinner = ora('Generating AI descriptions...').start();
-                await this.aiService.enhanceProjectIndex(projectIndex, config.ollama);
-                aiSpinner.succeed('AI descriptions generated');
-            }
-
-            // Generate mind map
-            const mindmapSpinner = ora('Generating mind map...').start();
-            const mindmapContent = await this.exportService.generateMindmap(
-                projectIndex,
-                {
-                    format: options.format,
-                    maxDepth: parseInt(options.maxDepth),
-                    typesOnly: options.typesOnly ? options.typesOnly.split(',') : null
+                // Check if we found any files
+                if (projectIndex.metadata.totalFiles === 0) {
+                    console.log(chalk.yellow('⚠️  No files found to index. Check your include/exclude patterns.'));
+                    console.log(chalk.cyan('Include patterns:'));
+                    config.include.forEach(pattern => console.log(chalk.white(`  - ${pattern}`)));
+                    return;
                 }
-            );
-            mindmapSpinner.succeed('Mind map generated');
 
-            if (options.dry) {
-                // Display in console
-                console.log(chalk.yellow('\n📋 Mind Map Preview (Dry Run)\n'));
-                console.log(this.colorizeMarkdown(mindmapContent));
-            } else {
-                // Save to file
-                const outputDir = path.resolve(options.output);
-                await fs.ensureDir(outputDir);
+                // Generate descriptions with AI if not dry run
+                if (!options.dry) {
+                    const aiSpinner = ora('Generating AI descriptions...').start();
+                    try {
+                        await this.aiService.enhanceProjectIndex(projectIndex, config.ollama);
+                        aiSpinner.succeed('AI descriptions generated');
+                    } catch (error) {
+                        aiSpinner.warn(`AI enhancement failed: ${error.message}`);
+                    }
+                }
 
-                const filename = `mindmap.${options.format}`;
-                const outputPath = path.join(outputDir, filename);
+                // Generate mind map
+                const mindmapSpinner = ora('Generating mind map...').start();
+                const mindmapContent = await this.exportService.generateMindmap(
+                    projectIndex,
+                    {
+                        format: options.format,
+                        maxDepth: parseInt(options.maxDepth),
+                        typesOnly: options.typesOnly ? options.typesOnly.split(',') : null
+                    }
+                );
+                mindmapSpinner.succeed('Mind map generated');
 
-                await fs.writeFile(outputPath, mindmapContent, 'utf8');
+                if (options.dry) {
+                    // Display in console
+                    console.log(chalk.yellow('\n📋 Mind Map Preview (Dry Run)\n'));
+                    console.log(this.colorizeMarkdown(mindmapContent));
+                } else {
+                    // Save to file
+                    const outputDir = path.resolve(options.output);
+                    await fs.ensureDir(outputDir);
 
-                console.log(chalk.green(`\n✅ Mind map exported to: ${outputPath}`));
-                this.displayMindmapStats(projectIndex);
+                    const filename = `mindmap.${options.format}`;
+                    const outputPath = path.join(outputDir, filename);
+
+                    await fs.writeFile(outputPath, mindmapContent, 'utf8');
+
+                    console.log(chalk.green(`\n✅ Mind map exported to: ${outputPath}`));
+                    this.displayMindmapStats(projectIndex);
+                }
+            } catch (indexError) {
+                spinner.fail(`Indexing failed: ${indexError.message}`);
+                throw indexError;
             }
 
         } catch (error) {
@@ -92,7 +127,7 @@ export class ExportController {
 
             // Index project with detailed analysis
             const spinner = ora('Performing deep project analysis...').start();
-            const projectIndex = await this.indexingService.indexProject(config, { detailed: true });
+            const projectIndex = await this.indexingService.indexProject(config, {detailed: true});
             spinner.succeed(`Analyzed ${projectIndex.totalFiles} files with detailed metadata`);
 
             // Generate AI descriptions and documentation

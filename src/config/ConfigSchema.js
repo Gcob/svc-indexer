@@ -161,12 +161,25 @@ export class ConfigSchema {
    * @returns {Object} Merged configuration
    */
   static mergeWithDefaults(config) {
+    // Process include patterns - convert absolute paths to relative
+    let processedInclude = config.include || DEFAULT_CONFIG.include;
+    if (config.project && config.project.rootPath && processedInclude.length > 0) {
+      processedInclude = processedInclude.map(pattern => {
+        // If pattern is an absolute path within the project, make it relative
+        if (path.isAbsolute(pattern) && pattern.startsWith(config.project.rootPath)) {
+          const relativePath = path.relative(config.project.rootPath, pattern);
+          return relativePath || '.';
+        }
+        return pattern;
+      });
+    }
+
     return {
       project: {
         ...DEFAULT_CONFIG.project,
         ...config.project
       },
-      include: config.include || DEFAULT_CONFIG.include,
+      include: processedInclude,
       exclude: [...DEFAULT_CONFIG.exclude, ...(config.exclude || [])],
       ollama: {
         ...DEFAULT_CONFIG.ollama,

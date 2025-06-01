@@ -32,6 +32,18 @@ export class IndexingService {
         const project = new Project(config.project);
         project.validate();
 
+        // Validate and resolve root path
+        const rootPath = path.resolve(config.project.rootPath);
+        if (!rootPath || rootPath === '') {
+            throw new Error('Project root path cannot be empty');
+        }
+
+        // Check if root path exists
+        const fs = await import('fs-extra');
+        if (!await fs.pathExists(rootPath)) {
+            throw new Error(`Project root path does not exist: ${rootPath}`);
+        }
+
         // Build ignore filter
         const ignoreFilter = await this.buildIgnoreFilter(config);
 
@@ -44,7 +56,7 @@ export class IndexingService {
         };
 
         const scanResult = await this.fileSystemService.scanDirectory(
-            config.project.rootPath,
+            rootPath,
             scanOptions
         );
 
@@ -116,21 +128,32 @@ export class IndexingService {
      */
     filterFiles(files, config, ignoreFilter) {
         return files.filter(file => {
-            const relativePath = path.relative(config.project.rootPath, file.path);
+            try {
+                const relativePath = path.relative(config.project.rootPath, file.path);
 
-            // Check ignore patterns
-            if (ignoreFilter.ignores(relativePath)) return false;
+                // Skip if relative path calculation fails
+                if (!relativePath || relativePath === '') {
+                    console.warn(`Warning: Could not calculate relative path for ${file.path}`);
+                    return false;
+                }
 
-            // Check include patterns
-            if (config.include && config.include.length > 0) {
-                return this.fileSystemService.shouldIncludePath(
-                    relativePath,
-                    config.include,
-                    []
-                );
+                // Check ignore patterns
+                if (ignoreFilter.ignores(relativePath)) return false;
+
+                // Check include patterns
+                if (config.include && config.include.length > 0) {
+                    return this.fileSystemService.shouldIncludePath(
+                        relativePath,
+                        config.include.map(pattern => path.relative(config.project.rootPath, pattern)),
+                        []
+                    );
+                }
+
+                return true;
+            } catch (error) {
+                console.warn(`Warning: Error filtering file ${file.path}: ${error.message}`);
+                return false;
             }
-
-            return true;
         });
     }
 
@@ -143,27 +166,40 @@ export class IndexingService {
      */
     filterFolders(folders, config, ignoreFilter) {
         return folders.filter(folder => {
-            const relativePath = path.relative(config.project.rootPath, folder.path);
+            try {
+                const relativePath = path.relative(config.project.rootPath, folder.path);
 
-            // Check ignore patterns
-            if (ignoreFilter.ignores(relativePath)) {
+                // Skip if relative path calculation fails
+                if (relativePath === '') {
+                    // This is the root folder
+                    folder.include = true;
+                    return true;
+                }
+
+                // Check ignore patterns
+                if (ignoreFilter.ignores(relativePath)) {
+                    folder.include = false;
+                    return false;
+                }
+
+                // Check include patterns
+                if (config.include && config.include.length > 0) {
+                    const shouldInclude = this.fileSystemService.shouldIncludePath(
+                        relativePath,
+                        config.include.map(pattern => path.relative(config.project.rootPath, pattern)),
+                        []
+                    );
+                    folder.include = shouldInclude;
+                    return shouldInclude;
+                }
+
+                folder.include = true;
+                return true;
+            } catch (error) {
+                console.warn(`Warning: Error filtering folder ${folder.path}: ${error.message}`);
                 folder.include = false;
                 return false;
             }
-
-            // Check include patterns
-            if (config.include && config.include.length > 0) {
-                const shouldInclude = this.fileSystemService.shouldIncludePath(
-                    relativePath,
-                    config.include,
-                    []
-                );
-                folder.include = shouldInclude;
-                return shouldInclude;
-            }
-
-            folder.include = true;
-            return true;
         });
     }
 
