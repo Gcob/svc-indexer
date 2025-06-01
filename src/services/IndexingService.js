@@ -1,217 +1,468 @@
-import fs from 'fs/promises';
+/**
+ * @fileoverview Project indexing service
+ */
+
 import path from 'path';
-import { Project } from '../models/Project.js';
-import { Folder } from '../models/Folder.js';
-import { File } from '../models/File.js';
-import { FileUtils } from '../utils/FileUtils.js';
+import ignore from 'ignore';
+import {FileSystemService} from './FileSystemService.js';
+import {GitService} from './GitService.js';
+import {Project} from '../models/Project.js';
 
 /**
- * Service for indexing project files and folders
+ * Service for indexing programming projects
  */
 export class IndexingService {
-    /**
-     * Creates a new IndexingService instance
-     */
     constructor() {
-        this.maxFileSize = 1024 * 1024; // 1MB max file size
-        this.binaryExtensions = new Set([
-            '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.svg', '.ico',
-            '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
-            '.zip', '.rar', '.7z', '.tar', '.gz', '.exe', '.dll', '.so',
-            '.bin', '.img', '.iso', '.dmg', '.app'
-        ]);
+        this.fileSystemService = new FileSystemService();
+        this.gitService = new GitService();
     }
 
     /**
-     * Indexes a project based on configuration
-     * @param {Config} config - Project configuration
-     * @returns {Promise<Project>} Indexed project
+     * Index a complete project
+     * @param {Object} config - Project configuration
+     * @param {Object} options - Indexing options
+     * @param {boolean} [options.detailed=false] - Perform detailed analysis
+     * @param {boolean} [options.readContent=true] - Read file contents
+     * @returns {Promise<Object>} Project index
      */
-    async indexProject(config) {
-        const project = new Project({
-            rootPath: config.project.rootPath,
-            languages: config.project.languages,
-            framework: config.project.framework,
-            naturalLanguage: config.project.naturalLanguage
-        });
+    async indexProject(config, options = {}) {
+        const {detailed = false, readContent = true} = options;
 
-        const rootPath = path.resolve(config.project.rootPath);
+        // Create project instance
+        const project = new Project(config.project);
+        project.validate();
 
-        // Check if root path exists
-        if (!(await FileUtils.exists(rootPath))) {
-            throw new Error(`Project root path does not exist: ${rootPath}`);
+        // Build ignore filter
+        const ignoreFilter = await this.buildIgnoreFilter(config);
+
+        // Scan project structure
+        const scanOptions = {
+            maxDepth: 15,
+            includeFiles: true,
+            includeHidden: !config.general.ignoreHidden,
+            excludePatterns: config.exclude
+        };
+
+        const scanResult = await this.fileSystemService.scanDirectory(
+            config.project.rootPath,
+            scanOptions
+        );
+
+        // Filter based on include/exclude patterns
+        const filteredFiles = this.filterFiles(scanResult.files, config, ignoreFilter);
+        const filteredFolders = this.filterFolders(scanResult.folders, config, ignoreFilter);
+
+        // Read file contents if requested
+        if (readContent) {
+            await this.enrichFilesWithContent(filteredFiles, detailed);
         }
 
-        await this.indexDirectory(rootPath, rootPath, config.exclude, project);
+        // Analyze project structure
+        const analysis = this.analyzeProjectStructure(filteredFiles, filteredFolders);
 
-        return project;
+        // Build final index
+        const projectIndex = {
+            project: project.toObject(),
+            files: filteredFiles.map(file => file.toObject()),
+            folders: filteredFolders.map(folder => folder.toObject()),
+            structure: this.buildProjectStructure(filteredFolders, filteredFiles),
+            analysis,
+            metadata: {
+                indexedAt: new Date(),
+                totalFiles: filteredFiles.length,
+                totalFolders: filteredFolders.length,
+                totalSize: filteredFiles.reduce((sum, file) => sum + (file.size || 0), 0),
+                languages: this.extractLanguages(filteredFiles),
+                fileTypes: this.getFileTypeDistribution(filteredFiles),
+                complexity: this.calculateOverallComplexity(filteredFiles)
+            }
+        };
+
+        return projectIndex;
     }
 
     /**
-     * Recursively indexes a directory
-     * @param {string} dirPath - Directory path to index
-     * @param {string} rootPath - Project root path
-     * @param {string[]} excludePatterns - Patterns to exclude
-     * @param {Project} project - Project instance to populate
-     * @param {number} depth - Current recursion depth
-     * @returns {Promise<Folder>} Indexed folder
+     * Build ignore filter from configuration
+     * @param {Object} config - Project configuration
+     * @returns {Promise<Object>} Ignore filter
      */
-    async indexDirectory(dirPath, rootPath, excludePatterns, project, depth = 0) {
-        const relativePath = path.relative(rootPath, dirPath);
-        const folder = new Folder({
-            path: dirPath,
-            relativePath: relativePath || '.',
-            include: true
-        });
+    async buildIgnoreFilter(config) {
+        const ignoreFilter = ignore();
 
-        // Check if this folder should be excluded
-        if (this.shouldExcludeFolder(relativePath, excludePatterns)) {
-            folder.include = false;
-            return folder;
+        // Add exclude patterns from config
+        ignoreFilter.add(config.exclude || []);
+
+        // Load .gitignore if enabled
+        if (config.general.useGitignore) {
+            try {
+                const gitignorePatterns = await this.gitService.loadGitignorePatterns(
+                    config.project.rootPath
+                );
+                ignoreFilter.add(gitignorePatterns);
+            } catch (error) {
+                console.warn(`Warning: Could not load .gitignore: ${error.message}`);
+            }
         }
 
-        try {
-            const entries = await fs.readdir(dirPath, { withFileTypes: true });
+        return ignoreFilter;
+    }
 
-            for (const entry of entries) {
-                const entryPath = path.join(dirPath, entry.name);
-                const entryRelativePath = path.relative(rootPath, entryPath);
+    /**
+     * Filter files based on include/exclude patterns
+     * @param {File[]} files - Files to filter
+     * @param {Object} config - Project configuration
+     * @param {Object} ignoreFilter - Ignore filter
+     * @returns {File[]} Filtered files
+     */
+    filterFiles(files, config, ignoreFilter) {
+        return files.filter(file => {
+            const relativePath = path.relative(config.project.rootPath, file.path);
 
-                if (entry.isDirectory()) {
-                    // Skip excluded directories
-                    if (this.shouldExcludeFolder(entryRelativePath, excludePatterns)) {
-                        continue;
-                    }
+            // Check ignore patterns
+            if (ignoreFilter.ignores(relativePath)) return false;
 
-                    const subfolder = await this.indexDirectory(
-                        entryPath,
-                        rootPath,
-                        excludePatterns,
-                        project,
-                        depth + 1
-                    );
+            // Check include patterns
+            if (config.include && config.include.length > 0) {
+                return this.fileSystemService.shouldIncludePath(
+                    relativePath,
+                    config.include,
+                    []
+                );
+            }
 
-                    folder.addSubfolder(subfolder);
-                    project.addFolder(subfolder);
-                } else if (entry.isFile()) {
-                    // Skip excluded files
-                    if (this.shouldExcludeFile(entry.name, entryRelativePath)) {
-                        continue;
-                    }
+            return true;
+        });
+    }
 
-                    try {
-                        const file = await this.indexFile(entryPath, rootPath);
-                        folder.addFile(file);
-                        project.addFile(file);
-                    } catch (error) {
-                        console.warn(`Warning: Could not index file ${entryPath}: ${error.message}`);
+    /**
+     * Filter folders based on include/exclude patterns
+     * @param {Folder[]} folders - Folders to filter
+     * @param {Object} config - Project configuration
+     * @param {Object} ignoreFilter - Ignore filter
+     * @returns {Folder[]} Filtered folders
+     */
+    filterFolders(folders, config, ignoreFilter) {
+        return folders.filter(folder => {
+            const relativePath = path.relative(config.project.rootPath, folder.path);
+
+            // Check ignore patterns
+            if (ignoreFilter.ignores(relativePath)) {
+                folder.include = false;
+                return false;
+            }
+
+            // Check include patterns
+            if (config.include && config.include.length > 0) {
+                const shouldInclude = this.fileSystemService.shouldIncludePath(
+                    relativePath,
+                    config.include,
+                    []
+                );
+                folder.include = shouldInclude;
+                return shouldInclude;
+            }
+
+            folder.include = true;
+            return true;
+        });
+    }
+
+    /**
+     * Enrich files with content analysis
+     * @param {File[]} files - Files to enrich
+     * @param {boolean} detailed - Perform detailed analysis
+     */
+    async enrichFilesWithContent(files, detailed = false) {
+        const promises = files.map(async (file) => {
+            try {
+                const enrichedFile = await this.fileSystemService.createFileFromPath(
+                    file.path,
+                    true // Read content
+                );
+
+                if (enrichedFile) {
+                    // Copy enriched data back to original file
+                    Object.assign(file, {
+                        lineCount: enrichedFile.lineCount,
+                        complexity: enrichedFile.complexity,
+                        doc: enrichedFile.doc,
+                        description: enrichedFile.description
+                    });
+
+                    // Perform detailed analysis if requested
+                    if (detailed) {
+                        await this.performDetailedAnalysis(file);
                     }
                 }
+            } catch (error) {
+                console.warn(`Warning: Could not enrich file ${file.path}: ${error.message}`);
             }
-        } catch (error) {
-            console.warn(`Warning: Could not read directory ${dirPath}: ${error.message}`);
-        }
+        });
 
-        return folder;
+        await Promise.all(promises);
     }
 
     /**
-     * Indexes a single file
-     * @param {string} filePath - File path to index
-     * @param {string} rootPath - Project root path
-     * @returns {Promise<File>} Indexed file
+     * Perform detailed file analysis
+     * @param {File} file - File to analyze
      */
-    async indexFile(filePath, rootPath) {
-        const stats = await fs.stat(filePath);
-
-        // Skip large files
-        if (stats.size > this.maxFileSize) {
-            throw new Error(`File too large: ${stats.size} bytes`);
-        }
-
-        const relativePath = path.relative(rootPath, filePath);
-        const extension = path.extname(filePath).toLowerCase();
-
-        // Skip binary files
-        if (this.binaryExtensions.has(extension)) {
-            return new File({
-                path: filePath,
-                relativePath,
-                content: '[Binary file - content not indexed]'
-            });
-        }
-
-        let content;
+    async performDetailedAnalysis(file) {
         try {
-            content = await fs.readFile(filePath, 'utf8');
+            const fs = await import('fs-extra');
+            const content = await fs.readFile(file.path, 'utf8');
+
+            // Enhanced complexity analysis
+            file.complexity = this.calculateAdvancedComplexity(content, file.language);
+
+            // Extract additional metadata
+            file.metadata = {
+                imports: this.extractImports(content, file.language),
+                exports: this.extractExports(content, file.language),
+                classes: this.extractClasses(content, file.language),
+                functions: this.extractFunctions(content, file.language),
+                dependencies: this.extractDependencies(content, file.language)
+            };
+
         } catch (error) {
-            // If we can't read as UTF8, it's probably binary
-            content = '[Binary or unreadable file - content not indexed]';
+            console.warn(`Warning: Detailed analysis failed for ${file.path}: ${error.message}`);
         }
-
-        return new File({
-            path: filePath,
-            relativePath,
-            content
-        });
     }
 
     /**
-     * Checks if a folder should be excluded
-     * @param {string} relativePath - Relative path of the folder
-     * @param {string[]} excludePatterns - Exclude patterns
-     * @returns {boolean} True if should be excluded
+     * Calculate advanced complexity score
+     * @param {string} content - File content
+     * @param {string} language - Programming language
+     * @returns {number} Complexity score (1-10)
      */
-    shouldExcludeFolder(relativePath, excludePatterns) {
-        if (!relativePath || relativePath === '.') {
-            return false;
-        }
+    calculateAdvancedComplexity(content, language) {
+        let complexity = 1;
 
-        const pathParts = relativePath.split(path.sep);
+        // Cyclomatic complexity
+        const cyclomaticKeywords = {
+            javascript: ['if', 'else', 'switch', 'case', 'for', 'while', 'do', 'try', 'catch', '&&', '||', '?'],
+            python: ['if', 'elif', 'else', 'for', 'while', 'try', 'except', 'and', 'or'],
+            java: ['if', 'else', 'switch', 'case', 'for', 'while', 'do', 'try', 'catch', '&&', '||', '?'],
+            php: ['if', 'else', 'switch', 'case', 'for', 'while', 'do', 'try', 'catch', '&&', '||', '?']
+        };
 
-        return excludePatterns.some(pattern => {
-            // Exact match
-            if (pathParts.includes(pattern)) {
-                return true;
-            }
+        const keywords = cyclomaticKeywords[language] || cyclomaticKeywords.javascript;
+        let keywordCount = 0;
 
-            // Pattern matching (simple glob-like)
-            if (pattern.includes('*')) {
-                const regex = new RegExp(pattern.replace(/\*/g, '.*'));
-                return regex.test(relativePath);
-            }
-
-            return false;
+        keywords.forEach(keyword => {
+            const regex = new RegExp(`\\b${keyword}\\b`, 'gi');
+            const matches = content.match(regex);
+            if (matches) keywordCount += matches.length;
         });
+
+        // Base complexity on control flow
+        if (keywordCount > 100) complexity += 4;
+        else if (keywordCount > 50) complexity += 3;
+        else if (keywordCount > 20) complexity += 2;
+        else if (keywordCount > 10) complexity += 1;
+
+        // Nesting level (approximate)
+        const nestingLevel = this.calculateNestingLevel(content);
+        if (nestingLevel > 5) complexity += 2;
+        else if (nestingLevel > 3) complexity += 1;
+
+        // Lines of code
+        const lines = content.split('\n').length;
+        if (lines > 1000) complexity += 3;
+        else if (lines > 500) complexity += 2;
+        else if (lines > 200) complexity += 1;
+
+        // Language-specific patterns
+        if (content.includes('async') || content.includes('await')) complexity += 1;
+        if (content.includes('Promise') || content.includes('callback')) complexity += 1;
+        if (content.includes('regex') || content.includes('RegExp')) complexity += 1;
+
+        return Math.max(1, Math.min(10, complexity));
     }
 
     /**
-     * Checks if a file should be excluded
-     * @param {string} fileName - File name
-     * @param {string} relativePath - Relative path of the file
-     * @returns {boolean} True if should be excluded
+     * Calculate approximate nesting level
+     * @param {string} content - File content
+     * @returns {number} Maximum nesting level
      */
-    shouldExcludeFile(fileName, relativePath) {
-        // Skip hidden files (starting with .)
-        if (fileName.startsWith('.') && fileName !== '.gitignore' && fileName !== '.env.example') {
-            return true;
+    calculateNestingLevel(content) {
+        let maxLevel = 0;
+        let currentLevel = 0;
+
+        for (const char of content) {
+            if (char === '{') {
+                currentLevel++;
+                maxLevel = Math.max(maxLevel, currentLevel);
+            } else if (char === '}') {
+                currentLevel = Math.max(0, currentLevel - 1);
+            }
         }
 
-        // Skip common temporary/cache files
-        const excludePatterns = [
-            '.DS_Store',
-            'Thumbs.db',
-            '*.tmp',
-            '*.log',
-            '*.cache'
-        ];
+        return maxLevel;
+    }
 
-        return excludePatterns.some(pattern => {
-            if (pattern.includes('*')) {
-                const regex = new RegExp(pattern.replace(/\*/g, '.*'));
-                return regex.test(fileName);
+    /**
+     * Extract imports from file content
+     * @param {string} content - File content
+     * @param {string} language - Programming language
+     * @returns {string[]} Array of imports
+     */
+    extractImports(content, language) {
+        const importPatterns = {
+            javascript: [
+                /import\s+.*\s+from\s+['"]([^'"]+)['"]/g,
+                /require\(['"]([^'"]+)['"]\)/g
+            ],
+            python: [
+                /import\s+([^\s]+)/g,
+                /from\s+([^\s]+)\s+import/g
+            ],
+            java: [
+                /import\s+([^;]+);/g
+            ],
+            php: [
+                /use\s+([^;]+);/g,
+                /require_once\s+['"]([^'"]+)['"]/g
+            ]
+        };
+
+        const patterns = importPatterns[language] || importPatterns.javascript;
+        const imports = [];
+
+        patterns.forEach(pattern => {
+            let match;
+            while ((match = pattern.exec(content)) !== null) {
+                imports.push(match[1]);
             }
-            return fileName === pattern;
         });
+
+        return [...new Set(imports)];
+    }
+
+    /**
+     * Extract exports from file content
+     * @param {string} content - File content
+     * @param {string} language - Programming language
+     * @returns {string[]} Array of exports
+     */
+    extractExports(content, language) {
+        const exportPatterns = {
+            javascript: [
+                /export\s+(?:default\s+)?(?:class|function|const|let|var)\s+([^\s(]+)/g,
+                /export\s*{\s*([^}]+)\s*}/g
+            ],
+            python: [
+                /def\s+([^\s(]+)/g,
+                /class\s+([^\s(:]+)/g
+            ]
+        };
+
+        const patterns = exportPatterns[language] || exportPatterns.javascript;
+        const exports = [];
+
+        patterns.forEach(pattern => {
+            let match;
+            while ((match = pattern.exec(content)) !== null) {
+                if (match[1].includes(',')) {
+                    exports.push(...match[1].split(',').map(e => e.trim()));
+                } else {
+                    exports.push(match[1]);
+                }
+            }
+        });
+
+        return [...new Set(exports)];
+    }
+
+    /**
+     * Extract classes from file content
+     * @param {string} content - File content
+     * @param {string} language - Programming language
+     * @returns {string[]} Array of class names
+     */
+    extractClasses(content, language) {
+        const classPatterns = {
+            javascript: /class\s+([^\s{]+)/g,
+            python: /class\s+([^\s(:]+)/g,
+            java: /class\s+([^\s{]+)/g,
+            php: /class\s+([^\s{]+)/g,
+            csharp: /class\s+([^\s{]+)/g
+        };
+
+        const pattern = classPatterns[language];
+        if (!pattern) return [];
+
+        const classes = [];
+        let match;
+        while ((match = pattern.exec(content)) !== null) {
+            classes.push(match[1]);
+        }
+
+        return classes;
+    }
+
+    /**
+     * Extract functions from file content
+     * @param {string} content - File content
+     * @param {string} language - Programming language
+     * @returns {string[]} Array of function names
+     */
+    extractFunctions(content, language) {
+        const functionPatterns = {
+            javascript: [
+                /function\s+([^\s(]+)/g,
+                /const\s+([^\s=]+)\s*=\s*(?:async\s+)?\(/g,
+                /([^\s=]+)\s*:\s*(?:async\s+)?function/g
+            ],
+            python: [
+                /def\s+([^\s(]+)/g
+            ],
+            java: [
+                /(?:public|private|protected)?\s*(?:static\s+)?[^\s]+\s+([^\s(]+)\s*\(/g
+            ],
+            php: [
+                /function\s+([^\s(]+)/g
+            ]
+        };
+
+        const patterns = functionPatterns[language] || functionPatterns.javascript;
+        const functions = [];
+
+        patterns.forEach(pattern => {
+            let match;
+            while ((match = pattern.exec(content)) !== null) {
+                functions.push(match[1]);
+            }
+        });
+
+        return [...new Set(functions)];
+    }
+
+    /**
+     * Extract dependencies from file content
+     * @param {string} content - File content
+     * @param {string} language - Programming language
+     * @returns {string[]} Array of dependencies
+     */
+    extractDependencies(content, language) {
+        // This is a simplified version - could be enhanced with package.json parsing, etc.
+        return this.extractImports(content, language)
+            .filter(imp => !imp.startsWith('.') && !imp.startsWith('/'));
+    }
+
+    /**
+     * Analyze project structure
+     * @param {File[]} files - Project files
+     * @param {Folder[]} folders - Project folders
+     * @returns {Object} Structure analysis
+     */
+    analyzeProjectStructure(files, folders) {
+        return {
+            architecture: this.detectArchitecturePattern(folders),
+            frameworks: this.detectFrameworks(files),
+            patterns: this.detectDesignPatterns(files),
+            testCoverage: this.calculateTestCoverage(files),
+            documentation: this.analyzeDocumentation(files),
+            dependencies: this.analyzeDependencies(files)
+        };
     }
 }

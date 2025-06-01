@@ -1,7 +1,7 @@
 {
   "name": "svc-indexer",
   "version": "1.0.0",
-  "description": "A Node.js service to index programming projects and export them to markdown for AI consumption",
+  "description": "A Node.js service to index programming projects with Ollama AI integration",
   "type": "module",
   "main": "src/index.js",
   "bin": {
@@ -9,25 +9,31 @@
   },
   "scripts": {
     "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
     "indexer",
-    "markdown",
+    "ollama",
     "ai",
     "documentation",
     "project-analysis"
   ],
-  "author": "",
+  "author": "Developer",
   "license": "MIT",
   "dependencies": {
     "commander": "^11.1.0",
     "inquirer": "^9.2.12",
     "chalk": "^5.3.0",
-    "js-yaml": "^4.1.0",
-    "ora": "^7.0.1"
+    "yaml": "^2.3.4",
+    "fs-extra": "^11.2.0",
+    "glob": "^10.3.10",
+    "ora": "^7.0.1",
+    "markdown-pdf": "^11.0.0",
+    "ignore": "^5.3.0",
+    "axios": "^1.6.2"
   },
   "engines": {
-    "node": ">=16.0.0"
+    "node": ">=18.0.0"
   }
 }
